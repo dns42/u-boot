@@ -1,5 +1,5 @@
 /*
- * Boot a Marvell Kirkwood SoC from UART0, using Xmodem.
+ * Boot a Marvell Kirkwood SoC, with Xmodem over UART0.
  *
  * (c) 2012 Daniel Stodden <daniel.stodden@gmail.com>
  *
@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 #include <libgen.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -31,11 +32,9 @@ static unsigned char kwboot_msg_boot[] = {
     0xBB, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77
 };
 
-#if 0
 static unsigned char kwboot_msg_debug[] = {
     0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77
 };
-#endif
 
 #define KWBOOT_MSG_REQ_DELAY 10  /* ms */
 #define KWBOOT_MSG_RSP_TIMEO 50  /* ms */
@@ -59,6 +58,21 @@ struct kwboot_block {
 } PACKED;
 
 #define KWBOOT_BLK_RSP_TIMEO 1000 /* ms */
+
+static int kwboot_verbose = 0;
+
+static void
+kwboot_printv(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (kwboot_verbose) {
+        va_start(ap, fmt);
+        vprintf(fmt, ap);
+        va_end(ap);
+        fflush(stdout);
+    }
+}
 
 static int
 kwboot_tty_recv(int fd, void *buf, size_t len, int timeo)
@@ -169,6 +183,9 @@ kwboot_bootmsg(int tty, void *msg)
     int rc;
     char c;
 
+    kwboot_printv("Sending boot message. "
+                  "Please power/reset the target. ");
+
     do {
         rc = tcflush(tty, TCIOFLUSH);
         if (rc)
@@ -182,6 +199,8 @@ kwboot_bootmsg(int tty, void *msg)
 
         rc = kwboot_tty_recv(tty, &c, 1,
                              KWBOOT_MSG_RSP_TIMEO);
+
+        kwboot_printv(".");
     } while (rc || c != NAK);
 
     return rc;
@@ -306,11 +325,15 @@ kwboot_terminal(int tty)
     char buf[128];
     ssize_t nin, nout;
 
+    rc = -1;
+
     in = fileno(stdin);
     if (!isatty(in))
         in = -1;
 
-    do {
+    rc = 0;
+
+    while (1) {
         fd_set rfds;
         int nfds = 0;
 
@@ -354,7 +377,7 @@ kwboot_terminal(int tty)
                 }
             } while (!nin);
         }
-    } while (1);
+    }
 
     return rc;
 }
@@ -362,7 +385,18 @@ kwboot_terminal(int tty)
 static void
 kwboot_usage(FILE *stream, char *progname)
 {
-    fprintf(stream, "Usage: %s <tty> <image>\n", progname);
+    fprintf(stream, "Usage: %s { -b <image> [-p] | -d } [ -t ] <tty>\n", progname);
+    fprintf(stream, "\n");
+
+    fprintf(stream, "  -b: boot <image>\n");
+    fprintf(stream, "  -p: patch <image> to type 0x69 (uart boot)\n");
+    fprintf(stream, "\n");
+
+    fprintf(stream, "  -d: enter BootRom debug mode\n");
+    fprintf(stream, "\n");
+
+    fprintf(stream, "  -t: mini terminal\n");
+    fprintf(stream, "\n");
 }
 
 int
@@ -375,24 +409,59 @@ main(int argc, char **argv)
 
     rv = 1;
     tty = -1;
+    bootmsg = NULL;
+    imgpath = NULL;
     img = NULL;
     term = 0;
+    kwboot_verbose = isatty(STDOUT_FILENO);
 
-    if (argc - optind < 2)
+    do {
+        int c = getopt(argc, argv, "hb:dt");
+        if (c < 0)
+            break;
+
+        switch (c) {
+        case 'b':
+            bootmsg = kwboot_msg_boot;
+            imgpath = optarg;
+            break;
+
+        case 'd':
+            bootmsg = kwboot_msg_debug;
+            imgpath = NULL;
+            break;
+
+        case 't':
+            term = 1;
+            break;
+
+        case 'h':
+            rv = 0;
+        default:
+            goto usage;
+        }
+    } while (1);
+
+    if (!bootmsg && !term)
+        goto usage;
+
+    if (argc - optind < 1)
         goto usage;
 
     ttypath = argv[optind++];
-    imgpath = argv[optind++];
-    bootmsg = kwboot_msg_boot;
 
     tty = kwboot_open_tty(ttypath, B115200);
-    if (tty < 0)
+    if (tty < 0) {
+        perror(ttypath);
         goto out;
+    }
 
-    img = fopen(imgpath, "r");
-    if (!img) {
-        perror(imgpath);
-        goto out;
+    if (imgpath) {
+        img = fopen(imgpath, "r");
+        if (!img) {
+            perror(imgpath);
+            goto out;
+        }
     }
 
     if (bootmsg) {
