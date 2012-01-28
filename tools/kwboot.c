@@ -200,7 +200,10 @@ kwboot_bootmsg(int tty, void *msg)
                              KWBOOT_MSG_RSP_TIMEO);
 
         kwboot_printv(".");
+
     } while (rc || c != NAK);
+
+    kwboot_printv("\n");
 
     return rc;
 }
@@ -260,6 +263,11 @@ kwboot_xm_sendblock(int fd, struct kwboot_block *block)
         if (rc)
             break;
 
+        if (c == ACK)
+            kwboot_printv(".");
+        else
+            kwboot_printv("+");
+
     } while (c == NAK && retries-- > 0);
 
     rc = c == ACK ? 0 : -1;
@@ -289,6 +297,8 @@ kwboot_xmodem(int tty, FILE *stream)
 
     pnum = 1;
 
+    kwboot_printv("Sending boot image. ");
+
     do {
         struct kwboot_block block;
 
@@ -307,7 +317,9 @@ kwboot_xmodem(int tty, FILE *stream)
     } while (1);
 
     rc = kwboot_tty_send_char(tty, EOT);
+
 out:
+    kwboot_printv("\n");
     return rc;
 
 can:
