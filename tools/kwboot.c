@@ -319,66 +319,106 @@ can:
 }
 
 static int
+kwboot_term_esc(const char *buf, int n, char *esc, int *s)
+{
+    int i;
+
+    for (i = 0; i < n; i++) {
+        if (*buf == esc[*s]) {
+            (*s)++;
+            if (!esc[*s])
+                break;
+        } else
+            *s = 0;
+    }
+
+    return esc[*s] ? -1 : 0;
+}
+
+static int
+kwboot_term_pipe(int in, int out, char *esc, int *s)
+{
+    ssize_t nin, nout;
+    char buf[128];
+
+    nin = read(in, buf, sizeof(buf));
+    if (nin < 0)
+        return -1;
+
+    if (esc && kwboot_term_esc(buf, nin, esc, s))
+        return 0;
+
+    while (nin > 0) {
+        nout = write(out, buf, nin);
+        if (nout <= 0)
+            return -1;
+        nin -= nout;
+    }
+
+    return 0;
+}
+
+static int
 kwboot_terminal(int tty)
 {
-    int rc, in;
-    char buf[128];
-    ssize_t nin, nout;
+    int rc, in, s;
+    char *esc = "\34c";
+    struct termios otio, tio;
 
     rc = -1;
 
-    in = fileno(stdin);
-    if (!isatty(in))
+    in = STDIN_FILENO;
+    if (isatty(in)) {
+        rc = tcgetattr(in, &otio);
+        if (!rc) {
+            tio = otio;
+            cfmakeraw(&tio);
+            rc = tcsetattr(in, TCSANOW, &tio);
+        }
+        if (rc) {
+            perror("tcsetattr");
+            goto out;
+        }
+
+        kwboot_printv("[Type Ctrl-%c then %c to quit]\r\n",
+                      esc[0]|0100, esc[1]);
+    } else
         in = -1;
 
     rc = 0;
+    s = 0;
 
-    while (1) {
+    do {
         fd_set rfds;
         int nfds = 0;
+
+        FD_SET(tty, &rfds);
+        nfds = nfds < tty ? tty : nfds;
 
         if (in >= 0) {
             FD_SET(in, &rfds);
             nfds = nfds < in ? in : nfds;
         }
 
-        FD_SET(tty, &rfds);
-        nfds = nfds < tty ? tty : nfds;
-
         nfds = select(nfds + 1, &rfds, NULL, NULL, NULL);
-        if (nfds < 0) {
-            if (errno != EINTR)
-                perror("select");
+        if (nfds < 0)
             break;
+
+        if (FD_ISSET(tty, &rfds)) {
+            rc = kwboot_term_pipe(tty, STDOUT_FILENO, NULL, NULL);
+            if (rc)
+                break;
         }
 
         if (FD_ISSET(in, &rfds)) {
-            do {
-                nin = fread(buf, 1, sizeof(buf), stdin);
-                if (!nin)
-                    break;
-
-                rc = kwboot_tty_send(tty, buf, nin);
-            } while (!rc);
+            rc = kwboot_term_pipe(in, tty, esc, &s);
+            if (rc)
+                break;
         }
+    } while (esc[s] != 0);
 
-        if (FD_ISSET(tty, &rfds)) {
-            do {
-                nin = read(tty, buf, sizeof(buf));
-                if (nin < 0)
-                    break;
-
-                while (nin > 0) {
-                    nout = fwrite(buf, 1, nin, stdout);
-                    if (nout <= 0)
-                        break;
-
-                    nin -= nout;
-                }
-            } while (!nin);
-        }
-    }
-
+    tcsetattr(in, TCSANOW, &otio);
+out:
     return rc;
 }
 
