@@ -344,7 +344,7 @@ kwboot_term_pipe(int in, int out, char *esc, int *s)
     if (nin < 0)
         return -1;
 
-    if (esc && kwboot_term_esc(buf, nin, esc, s))
+    if (esc && !kwboot_term_esc(buf, nin, esc, s))
         return 0;
 
     while (nin > 0) {
