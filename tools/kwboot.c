@@ -16,7 +16,6 @@
 #include <errno.h>
 #include <unistd.h>
 #include <termios.h>
-#include <assert.h>
 
 #ifdef __GNUC__
 #define PACKED __attribute((packed))
