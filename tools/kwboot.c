@@ -19,6 +19,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
+#include "kwbimage.h"
+
 #ifdef __GNUC__
 #define PACKED __attribute((packed))
 #else
@@ -459,6 +461,60 @@ out:
     return img;
 }
 
+static uint8_t
+kwboot_img_csum8(void *_data, size_t size)
+{
+    uint8_t *data = _data, csum;
+
+    for (csum = 0; size-- > 0; data++)
+        csum += *data;
+
+	return csum;
+}
+
+static int
+kwboot_img_patch_hdr(void *img, size_t size)
+{
+    int rc;
+    bhr_t *hdr;
+    uint8_t csum;
+    const size_t hdrsz = sizeof(*hdr);
+
+    rc = -1;
+    hdr = img;
+
+    if (size < hdrsz) {
+        errno = EINVAL;
+        goto out;
+    }
+
+    csum = kwboot_img_csum8(hdr, hdrsz) - hdr->checkSum;
+    if (csum != hdr->checkSum) {
+        errno = EINVAL;
+        goto out;
+    }
+
+    if (hdr->blockid == IBR_HDR_UART_ID) {
+        rc = 0;
+        goto out;
+    }
+
+    hdr->blockid = IBR_HDR_UART_ID;
+
+    hdr->nandeccmode = IBR_HDR_ECC_DISABLED;
+    hdr->nandpagesize = 0;
+
+    hdr->srcaddr = hdr->ext
+        ? sizeof(struct kwb_header)
+        : sizeof(*hdr);
+
+    hdr->checkSum = kwboot_img_csum8(hdr, hdrsz) - csum;
+
+    rc = 0;
+out:
+    return rc;
+}
+
 static void
 kwboot_usage(FILE *stream, char *progname)
 {
@@ -491,12 +547,13 @@ main(int argc, char **argv)
     imgpath = NULL;
     img = NULL;
     term = 0;
+    patch = 0;
     size = 0;
 
     kwboot_verbose = isatty(STDOUT_FILENO);
 
     do {
-        int c = getopt(argc, argv, "hb:dt");
+        int c = getopt(argc, argv, "hb:dpt");
         if (c < 0)
             break;
 
@@ -511,6 +568,10 @@ main(int argc, char **argv)
             imgpath = NULL;
             break;
 
+        case 'p':
+            patch = 1;
+            break;
+
         case 't':
             term = 1;
             break;
@@ -523,6 +584,9 @@ main(int argc, char **argv)
     } while (1);
 
     if (!bootmsg && !term)
+        goto usage;
+
+    if (patch && !imgpath)
         goto usage;
 
     if (argc - optind < 1)
