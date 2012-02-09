@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdint.h>
 #include <termios.h>
 
 #ifdef __GNUC__
@@ -49,11 +50,11 @@ static unsigned char kwboot_msg_debug[] = {
 #define CAN 24 /* target/sender transfer cancellation */
 
 struct kwboot_block {
-    char soh;
-    char pnum;
-    char _pnum;
-    char data[128];
-    char csum;
+    uint8_t soh;
+    uint8_t pnum;
+    uint8_t _pnum;
+    uint8_t data[128];
+    uint8_t csum;
 } PACKED;
 
 #define KWBOOT_BLK_RSP_TIMEO 1000 /* ms */
