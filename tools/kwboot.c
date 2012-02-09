@@ -319,24 +319,24 @@ can:
 }
 
 static int
-kwboot_term_esc(const char *buf, int n, char *esc, int *s)
+kwboot_term_quit(const char *buf, int n, const char *quit, int *s)
 {
     int i;
 
     for (i = 0; i < n; i++) {
-        if (*buf == esc[*s]) {
+        if (*buf == quit[*s]) {
             (*s)++;
-            if (!esc[*s])
+            if (!quit[*s])
                 break;
         } else
             *s = 0;
     }
 
-    return esc[*s] ? -1 : 0;
+    return quit[*s] ? -1 : 0;
 }
 
 static int
-kwboot_term_pipe(int in, int out, char *esc, int *s)
+kwboot_term_pipe(int in, int out, char *quit, int *s)
 {
     ssize_t nin, nout;
     char buf[128];
@@ -345,7 +345,7 @@ kwboot_term_pipe(int in, int out, char *esc, int *s)
     if (nin < 0)
         return -1;
 
-    if (esc && !kwboot_term_esc(buf, nin, esc, s))
+    if (quit && !kwboot_term_quit(buf, nin, quit, s))
         return 0;
 
     while (nin > 0) {
@@ -362,7 +362,7 @@ static int
 kwboot_terminal(int tty)
 {
     int rc, in, s;
-    char *esc = "\34c";
+    char *quit = "\34c";
     struct termios otio, tio;
 
     rc = -1;
@@ -380,8 +380,8 @@ kwboot_terminal(int tty)
             goto out;
         }
 
-        kwboot_printv("[Type Ctrl-%c then %c to quit]\r\n",
-                      esc[0]|0100, esc[1]);
+        kwboot_printv("[Type Ctrl-%c + %c to quit]\r\n",
+                      quit[0]|0100, quit[1]);
     } else
         in = -1;
 
@@ -411,11 +411,11 @@ kwboot_terminal(int tty)
         }
 
         if (FD_ISSET(in, &rfds)) {
-            rc = kwboot_term_pipe(in, tty, esc, &s);
+            rc = kwboot_term_pipe(in, tty, quit, &s);
             if (rc)
                 break;
         }
-    } while (esc[s] != 0);
+    } while (quit[s] != 0);
 
     tcsetattr(in, TCSANOW, &otio);
 out:
