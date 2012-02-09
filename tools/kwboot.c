@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdint.h>
 #include <termios.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
