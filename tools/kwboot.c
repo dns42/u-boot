@@ -17,6 +17,8 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <termios.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 
 #ifdef __GNUC__
 #define PACKED __attribute((packed))
@@ -209,43 +211,25 @@ kwboot_bootmsg(int tty, void *msg)
     return rc;
 }
 
-static ssize_t
-kwboot_xm_readblock(struct kwboot_block *block, FILE *stream, int pnum)
+static int
+kwboot_xm_makeblock(struct kwboot_block *block,
+                    const void *data, size_t size, int pnum)
 {
     const size_t blksz = sizeof(block->data);
-    ssize_t rc;
     size_t n;
     int i;
 
     block->pnum = pnum;
-
-    n = 0;
-    do {
-        int _n;
-
-        _n = fread(&block->data[n], 1, blksz - n, stream);
-        if (!_n)
-            break;
-
-        n += _n;
-    } while (n < blksz);
-
-    if (n < blksz) {
-        rc = ferror(stream) ? -1 : 0;
-        if (rc)
-            goto out;
-
-        memset(&block->data[n], 0, blksz - n);
-    }
-
     block->_pnum = ~block->pnum;
+
+    n = size < blksz ? size : blksz;
+    memcpy(&block->data[0], data, n);
+    memset(&block->data[n], 0, blksz - n);
 
     for (i = 0, block->csum = 0; i < n; i++)
         block->csum += block->data[i];
 
-    rc = n;
-out:
-    return rc;
+    return n;
 }
 
 static int
@@ -291,10 +275,10 @@ kwboot_xm_sendblock(int fd, struct kwboot_block *block)
 }
 
 static int
-kwboot_xmodem(int tty, FILE *stream)
+kwboot_xmodem(int tty, const void *_data, size_t size)
 {
+    const uint8_t *data = _data;
     int rc, pnum, err;
-    ssize_t n;
 
     pnum = 1;
 
@@ -302,10 +286,9 @@ kwboot_xmodem(int tty, FILE *stream)
 
     do {
         struct kwboot_block block;
+        int n;
 
-        rc = -1;
-
-        n = kwboot_xm_readblock(&block, stream, pnum++);
+        n = kwboot_xm_makeblock(&block, data, size, pnum++);
         if (n < 0)
             goto can;
 
@@ -315,6 +298,9 @@ kwboot_xmodem(int tty, FILE *stream)
         rc = kwboot_xm_sendblock(tty, &block);
         if (rc)
             goto out;
+
+        data += n;
+        size -= n;
     } while (1);
 
     rc = kwboot_tty_send_char(tty, EOT);
@@ -434,6 +420,46 @@ out:
     return rc;
 }
 
+static void *
+kwboot_mmap_image(const char *path, size_t *size, int prot)
+{
+    int rc, fd, flags;
+    struct stat st;
+    void *img;
+
+    rc = -1;
+    fd = -1;
+    img = NULL;
+
+    fd = open(path, O_RDONLY);
+    if (fd < 0)
+        goto out;
+
+    rc = fstat(fd, &st);
+    if (rc)
+        goto out;
+
+    flags = (prot & PROT_WRITE) ? MAP_PRIVATE : MAP_SHARED;
+
+    img = mmap(NULL, st.st_size, prot, flags, fd, 0);
+    if (img == MAP_FAILED) {
+        img = NULL;
+        goto out;
+    }
+
+    rc = 0;
+    *size = st.st_size;
+out:
+    if (rc && img) {
+        munmap(img, st.st_size);
+        img = NULL;
+    }
+    if (fd >= 0)
+        close(fd);
+
+    return img;
+}
+
 static void
 kwboot_usage(FILE *stream, char *progname)
 {
@@ -455,9 +481,10 @@ int
 main(int argc, char **argv)
 {
     const char *ttypath, *imgpath;
-    int rv, rc, tty, term;
+    int rv, rc, tty, term, prot;
     void *bootmsg;
-    FILE *img;
+    void *img;
+    size_t size;
 
     rv = 1;
     tty = -1;
@@ -465,6 +492,8 @@ main(int argc, char **argv)
     imgpath = NULL;
     img = NULL;
     term = 0;
+    size = 0;
+
     kwboot_verbose = isatty(STDOUT_FILENO);
 
     do {
@@ -509,9 +538,19 @@ main(int argc, char **argv)
     }
 
     if (imgpath) {
-        img = fopen(imgpath, "r");
+        prot = PROT_READ | (patch ? PROT_WRITE : 0);
+
+        img = kwboot_mmap_image(imgpath, &size, prot);
         if (!img) {
             perror(imgpath);
+            goto out;
+        }
+    }
+
+    if (patch) {
+        rc = kwboot_img_patch_hdr(img, size);
+        if (rc) {
+            fprintf(stderr, "%s: Invalid image.\n", imgpath);
             goto out;
         }
     }
@@ -525,7 +564,7 @@ main(int argc, char **argv)
     }
 
     if (img) {
-        rc = kwboot_xmodem(tty, img);
+        rc = kwboot_xmodem(tty, img, size);
         if (rc) {
             perror("xmodem");
             goto out;
@@ -546,7 +585,7 @@ out:
         close(tty);
 
     if (img)
-        fclose(img);
+        munmap(img, size);
 
     return rv;
 
