@@ -102,6 +102,43 @@ kwboot_spinner(void)
         __spinner();
 }
 
+static void
+__progress(int pct, char c)
+{
+    const int width = 70;
+    static const char *nl = "";
+    static int pos;
+
+    if (pos % width == 0)
+        printf("%s%3d %% [", nl, pct);
+
+    fputc(c, stdout);
+
+    nl = "]\n";
+    pos++;
+
+    if (pct == 100) {
+        while (pos++ < width)
+            fputc(' ', stdout);
+        fputs(nl, stdout);
+    }
+
+    fflush(stdout);
+
+}
+
+static void
+kwboot_progress(int _pct, char c)
+{
+    static int pct = 0;
+
+    if (_pct != -1)
+        pct = _pct;
+
+    if (kwboot_verbose)
+        __progress(pct, c);
+}
+
 static int
 kwboot_tty_recv(int fd, void *buf, size_t len, int timeo)
 {
@@ -274,10 +311,8 @@ kwboot_xm_sendblock(int fd, struct kwboot_block *block)
         if (rc)
             break;
 
-        if (c == ACK)
-            kwboot_printv(".");
-        else
-            kwboot_printv("+");
+        if (c != ACK)
+            kwboot_progress(-1, '+');
 
     } while (c == NAK && retries-- > 0);
 
@@ -304,17 +339,20 @@ static int
 kwboot_xmodem(int tty, const void *_data, size_t size)
 {
     const uint8_t *data = _data;
-    int rc, pnum, err;
+    int rc, pnum, N, err;
 
     pnum = 1;
+    N = 0;
 
-    kwboot_printv("Sending boot image. ");
+    kwboot_printv("Sending boot image...\n");
 
     do {
         struct kwboot_block block;
         int n;
 
-        n = kwboot_xm_makeblock(&block, data, size, pnum++);
+        n = kwboot_xm_makeblock(&block,
+                                data + N, size - N,
+                                pnum++);
         if (n < 0)
             goto can;
 
@@ -325,14 +363,13 @@ kwboot_xmodem(int tty, const void *_data, size_t size)
         if (rc)
             goto out;
 
-        data += n;
-        size -= n;
+        N += n;
+        kwboot_progress(N * 100 / size, '.');
     } while (1);
 
     rc = kwboot_tty_send_char(tty, EOT);
 
 out:
-    kwboot_printv("\n");
     return rc;
 
 can:
