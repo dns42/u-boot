@@ -78,6 +78,30 @@ kwboot_printv(const char *fmt, ...)
     }
 }
 
+static void
+__spinner(void)
+{
+    const char seq[] = { '-', '\\', '|', '/' };
+    const int div = 8;
+    static int state, bs;
+
+    if (state % div == 0) {
+        fputc(bs, stdout);
+        fputc(seq[state / div % sizeof(seq)], stdout);
+        fflush(stdout);
+    }
+
+    bs = '\b';
+    state++;
+}
+
+static void
+kwboot_spinner(void)
+{
+    if (kwboot_verbose)
+        __spinner();
+}
+
 static int
 kwboot_tty_recv(int fd, void *buf, size_t len, int timeo)
 {
@@ -188,7 +212,7 @@ kwboot_bootmsg(int tty, void *msg)
     char c;
 
     kwboot_printv("Sending boot message. "
-                  "Please power/reset the target. ");
+                  "Please power/reset the target...");
 
     do {
         rc = tcflush(tty, TCIOFLUSH);
@@ -204,7 +228,7 @@ kwboot_bootmsg(int tty, void *msg)
         rc = kwboot_tty_recv(tty, &c, 1,
                              KWBOOT_MSG_RSP_TIMEO);
 
-        kwboot_printv(".");
+        kwboot_spinner();
 
     } while (rc || c != NAK);
 
