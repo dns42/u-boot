@@ -380,34 +380,34 @@ can:
 }
 
 static int
-kwboot_term_quit(const char *buf, int n, const char *quit, int *s)
-{
-    int i;
-
-    for (i = 0; i < n; i++) {
-        if (*buf == quit[*s]) {
-            (*s)++;
-            if (!quit[*s])
-                break;
-        } else
-            *s = 0;
-    }
-
-    return quit[*s] ? -1 : 0;
-}
-
-static int
 kwboot_term_pipe(int in, int out, char *quit, int *s)
 {
     ssize_t nin, nout;
-    char buf[128];
+    char _buf[128], *buf = _buf;
 
     nin = read(in, buf, sizeof(buf));
     if (nin < 0)
         return -1;
 
-    if (quit && !kwboot_term_quit(buf, nin, quit, s))
-        return 0;
+    if (quit) {
+        int i;
+
+        for (i = 0; i < nin; i++) {
+            if (*buf == quit[*s]) {
+                (*s)++;
+                if (!quit[*s])
+                    return 0;
+                buf++;
+                nin--;
+            } else
+                while (*s > 0) {
+                    nout = write(out, quit, *s);
+                    if (nout <= 0)
+                        return -1;
+                    (*s) -= nout;
+                }
+        }
+    }
 
     while (nin > 0) {
         nout = write(out, buf, nin);
