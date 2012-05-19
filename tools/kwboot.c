@@ -160,6 +160,10 @@ kwboot_tty_recv(int fd, void *buf, size_t len, int timeo)
 		nfds = select(fd + 1, &rfds, NULL, NULL, &tv);
 		if (nfds < 0)
 			goto out;
+		if (!nfds) {
+			errno = ETIMEDOUT;
+			goto out;
+		}
 
 		n = read(fd, buf, len);
 		if (n < 0)
